@@ -1,0 +1,9 @@
+name: qperceptron
+dependencies:
+  - python==3.6.4
+  - scipy==1.1.0
+  - matplotlib==2.0.2
+  - pandas==0.23.3
+  - numpy==1.14.2
+  - tensorflow==1.13.1
+
