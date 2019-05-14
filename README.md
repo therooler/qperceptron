@@ -1,3 +1,7 @@
+## Code: Implementing perceptron models with qubits
+
+The Python 3 code to reproduce the figures in the paper ARXIV LINK.
+
 ### Getting the plots
 
 This documentation was written with Conda 4.6.12. Please use the probided environment.yml
