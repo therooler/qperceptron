@@ -1,7 +1,6 @@
 ### Getting the plots
 
-This documentation was written with Conda 4.6.12. Something breaks if one does not use this 
-environment.yml
+This documentation was written with Conda 4.6.12. Please use the probided environment.yml
 
 #### Step 1:
 
