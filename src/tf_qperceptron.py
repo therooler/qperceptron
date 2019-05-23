@@ -142,6 +142,7 @@ class QuantumLearning:
         self.fetch_names = None
         self.fetchable_vars = []
         self.learn_hamiltonian = None
+        self.FLAG_GRAPH = False
 
         if 'dim' in params.keys():
             self.dim = params['dim']
@@ -248,7 +249,7 @@ class QuantumLearning:
         assert self.n_samples != None, 'Number of samples unknown, specify as model argument or run QubitLearning.get_statistics'
         assert isinstance(hilbert_space_composition,
                           (list, tuple, np.ndarray)), 'Pass list, tuple or ndarray of Hilbert space dimensions'
-
+        assert len(hilbert_space_composition) > 0, 'Hilbert space must consist of at least one dimension'
         assert all(isinstance(d, int) for d in
                    hilbert_space_composition), 'Expected list of integers for the dimensions of the composite Hilbert spaces'
         assert all(d >= 2 for d in hilbert_space_composition), 'Composite Hilbert spaces must have dim(H_i) >= 2'
@@ -265,6 +266,7 @@ class QuantumLearning:
             self.eta = tf.placeholder(dtype=tf.complex128, shape=(None, self.c, self.c))
 
             if len(hilbert_space_composition) == 1:
+                print('Building non-entangled model')
                 self.MODEL_TYPE = 'single'
                 generators = self.SU_generators(dims[0])
                 self.x = tf.placeholder(dtype=tf.float32, shape=(None, self.dim))
@@ -279,6 +281,8 @@ class QuantumLearning:
                                                                                            tf.to_complex128(phi),
                                                                                            generators))
             else:
+                print('Building entangled model')
+
                 if len(hilbert_space_composition) == 2:
                     self.MODEL_TYPE = 'bipartite'
                 elif len(hilbert_space_composition) > 2:
@@ -343,13 +347,19 @@ class QuantumLearning:
                     rho_red = self.partial_trace(rho, dims)
 
                     with tf.name_scope('quantities'):
-                        tf.identity(energies[:,0], name='gs_energy')
-                        tf.identity(energies[:,0] - energies[:,1], name='width')
-                        lams, _ =  tf.linalg.eigh(rho_red)
+                        tf.identity(energies[:, 0], name='gs_energy')
+                        tf.identity(energies[:, 0] - energies[:, 1], name='width')
+                        lams, _ = tf.linalg.eigh(rho_red)
                         lams = tf.identity(lams, name='lams')
                         tf.reduce_sum(-lams * tf.log(lams), axis=1, name='vn_entropy')
 
         with tf.name_scope('negative_quantum_log_likelihood'):
+            # if lambda_op:
+            #     gamma_0 = tf.constant(np.array([[1, 0], [0, 0]]), dtype=tf.complex128)
+            #     gamma_1 = tf.constant(np.array([[0, 0], [0, 1]]), dtype=tf.complex128)
+            #
+            #     self.negqll =- tf.reduce_sum(self.q_y[0] * tf.real(tf.log(tf.trace(tf.einsum('nij,jk->nik', rho_red, gamma_0)))))
+            #     self.negqll -= tf.reduce_sum(self.q_y[1] * tf.real(tf.log(tf.trace(tf.einsum('nij,jk->nik', rho_red, gamma_1)))))
             if self.c == 2:
                 self.negqll = -tf.reduce_sum(tf.real(tf.trace(tf.matmul(self.eta, self.matrix_log_2x2(rho_red)))))
             else:
@@ -375,15 +385,23 @@ class QuantumLearning:
             self._initialize_session(device)
 
         with tf.name_scope('predictor'):
-            # self.probabilities = tf.placeholder(dtype=tf.float32, shape=(None, self.c))
-            self.probabilities = tf.stack([rho_red[:, 0, 0], rho_red[:, 1, 1]], axis=1)
-            # _, v = tf.linalg.eigh(rho)
-            # self.probabilities = tf.reshape(v[:, :-1] * tf.conj(v[:, :-1]), (-1, self.c))
-            # print(self.probabilities)
+
+            # if lambda_op:
+            #     self.probabilities = tf.trace(tf.einsum('nij,jk->nik', rho_red, gamma_0))
+            #     self.probabilities = tf.stack([self.probabilities, 1 - self.probabilities], axis=1)
+            if self.c == 2:
+                self.probabilities = tf.stack([rho_red[:, 0, 0], rho_red[:, 1, 1]], axis=1)
+            else:
+                _, v = tf.linalg.eigh(rho_red)
+                self.probabilities = tf.abs(v[:,:,0]) ** 2
+
+
+
+        self.FLAG_GRAPH = True
 
     def fetch_vars_train(self, fetch_names):
         assert isinstance(fetch_names, (list, tuple)), 'Expected list or tuple of variable names'
-        assert self.learn_hamiltonian, 'not a learnable hamiltonian'
+        assert self.FLAG_GRAPH, 'Build the graph first.'
         tensorlist = [n.name for n in tf.get_default_graph().as_graph_def().node]
         assert all(w in tensorlist for w in fetch_names), '{} not found in list of trainable variables'.format(
             list(w for w in fetch_names if w not in tensorlist)
@@ -413,6 +431,7 @@ class QuantumLearning:
         self.file_writer = tf.summary.FileWriter('./tensorboard', self._sess.graph)
         self._sess.run(tf.global_variables_initializer())
 
+
     def predict(self, data):
 
         with tf.name_scope('predict'):
@@ -423,7 +442,7 @@ class QuantumLearning:
             probabilities = self._sess.run([self.probabilities], feed_dict=feed_dict)[0]
         return probabilities
 
-    def fetcher(self, data, name):
+    def _fetcher(self, data, name):
         with tf.name_scope('fetcher'):
             if self.bias:
                 data = self.add_bias(data)
@@ -433,6 +452,8 @@ class QuantumLearning:
         return quantity
 
     def train(self, data, verbose=True, tol=1e-4, maxiter=100):
+        assert isinstance(verbose, bool), 'the parameter verbose must be a boolean'
+        assert self.FLAG_GRAPH, 'Build the graph before training'
 
         with tf.name_scope('train'):
 
@@ -445,25 +466,21 @@ class QuantumLearning:
                     fetch_dict[name] = []
             else:
                 self.fetch_names = []
-            # Get the feed_dict
             feed_dict = {self.x: data,
-                         self.eta: self.Q}
+                             self.eta: self.Q}
             for iteration in range(maxiter):
+                print(iteration)
                 # add additional options to trace the session execution
                 options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
                 run_metadata = tf.RunMetadata()
 
-                if self.learn_hamiltonian is not None:
-                    _, l, merged, fetches = self._sess.run(
-                        [self.train_step, self.negqll, self.merged, self.fetchable_vars],
-                        feed_dict=feed_dict,
-                        options=options, run_metadata=run_metadata)
-                    for i, name in enumerate(self.fetch_names):
-                        fetch_dict[name].append(fetches[i])
+                _, l, merged, fetches = self._sess.run(
+                    [self.train_step, self.negqll, self.merged, self.fetchable_vars],
+                    feed_dict=feed_dict,
+                    options=options, run_metadata=run_metadata)
+                for i, name in enumerate(self.fetch_names):
+                    fetch_dict[name].append(fetches[i])
 
-                else:
-                    _, l, merged = self._sess.run([self.train_step, self.negqll, self.merged], feed_dict=feed_dict,
-                                                  options=options, run_metadata=run_metadata)
                 self.lh.append(l)
                 self.file_writer.add_run_metadata(run_metadata, 'step {}'.format(iteration))
                 self.file_writer.add_summary(merged, iteration)
@@ -564,7 +581,7 @@ class QuantumLearning:
                 d -= 1
                 h_d = np.sqrt(2 / (d * (d - 1))) * (
                     direct_sum(np.identity(d - 1), np.array([[1 - d]])))
-                f[:, :, c] = direct_sum(h_d, np.array([[0]]))
+                f[:, :, c] = direct_sum(h_d, np.zeros(dim-d,dim-d))
                 c += 1
         return tf.constant(f, dtype=tf.complex128)
         # return tf.constant(f[:, :, 2].reshape(2, 2, 1), dtype=tf.complex128)

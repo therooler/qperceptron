@@ -18,7 +18,7 @@ class CleanCommand(Command):
 
 setup(
     name='qperceptron',
-    version='0.1',
+    version='0.1.1',
     packages=['qperceptron',],
     license='MIT License',
     author='Roeland Wiersema',

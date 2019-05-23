@@ -50,7 +50,7 @@ else:
     qp.get_statistics(X, y)
     # For small data sets there is a lot of overhead from GPU->CPU
     qp.build_graph([2,], epsilon=epsilon, complex_weights=True, device='CPU')
-    qp.train(X, X.shape[0], maxiter=nsteps, tol=tol)
+    qp.train(X, True, maxiter=nsteps, tol=tol)
     q = qp.q_x
 
 cmap = plt.cm.get_cmap('viridis')
